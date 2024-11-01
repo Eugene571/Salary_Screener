@@ -6,50 +6,83 @@ import pytz
 from terminaltables import AsciiTable
 from dotenv import load_dotenv
 
+TOWN_ID = 4
+CATALOGUE_ID = 48
+DEFAULT_PERIOD = 0
+VACANCIES_COUNT = 100
 
-def get_vacancies_hh(text, area):
+
+def get_vacancies_hh(text, area, last_month_date):
     vacancies = []
+    total_vacancies = 0
     page = 0
     per_page = 100
 
     while True:
-        response = requests.get('https://api.hh.ru/vacancies',
-                                params={'text': text, 'area': area, 'per_page': per_page, 'page': page})
-        response.raise_for_status()
-        data = response.json()
-        vacancies.extend(data['items'])
-        if len(data['items']) < per_page or len(vacancies) >= 2000:
+        params = {
+            'text': text,
+            'area': area,
+            'per_page': per_page,
+            'page': page,
+            'date_from': last_month_date
+        }
+        response = requests.get('https://api.hh.ru/vacancies', params=params)
+
+        if response.status_code != 200:
+            print(f"Ошибка: {response.status_code} - {response.text}")
             break
+
+        data = response.json()
+
+        total_vacancies = data.get('found', 0)
+
+        if not data['items']:
+            break
+
+        vacancies.extend(data['items'])
+
+        if page * per_page >= 2000 or len(data['items']) < per_page:
+            break
+
         page += 1
 
-    return vacancies[:2000]
+    return vacancies, total_vacancies
 
 
 def predict_rub_salary_hh(vacancy):
     salary = vacancy.get('salary')
-    if salary and salary.get('currency') == 'RUR':
-        salary_from = salary.get('from')
-        salary_to = salary.get('to')
-        if salary_from and salary_to:
-            return (salary_from + salary_to) / 2
-        return salary_from * 1.2 if salary_from else salary_to * 0.8 if salary_to else None
+    if not salary:
+        return None
+
+    if salary.get('currency') != 'RUR':
+        return None
+
+    salary_from = salary.get('from')
+    salary_to = salary.get('to')
+
+    if salary_from and salary_to:
+        return (salary_from + salary_to) / 2
+    if salary_from:
+        return salary_from * 1.2
+    if salary_to:
+        return salary_to * 0.8
+
     return None
 
 
 def collect_hh_statistics(languages, area):
-    all_vacancies = get_vacancies_hh('программист', area)
-    last_month_date = datetime.now(pytz.timezone('Europe/Moscow')) - timedelta(days=30)
-    last_month_vacancies = [vacancy for vacancy in all_vacancies if
-                            parser.isoparse(vacancy['published_at']) >= last_month_date]
-
+    last_month_date = (datetime.now(pytz.timezone('Europe/Moscow')) - timedelta(days=30)).isoformat()
     language_stats = {}
+
     for language in languages:
-        language_vacancies = [vacancy for vacancy in last_month_vacancies if language in vacancy['name'].lower()]
-        predicted_salaries = [predict_rub_salary_hh(vacancy) for vacancy in language_vacancies[:20] if
-                              predict_rub_salary_hh(vacancy) is not None]
+        all_vacancies, total_vacancies = get_vacancies_hh(f'программист {language}', area, last_month_date)
+
+        predicted_salaries = [
+            salary for vacancy in all_vacancies if (salary := predict_rub_salary_hh(vacancy))
+        ]
 
         language_stats[language] = {
-            'vacancies_found': len(language_vacancies),
+            'vacancies_found': total_vacancies,
             'vacancies_processed': len(predicted_salaries),
             'average_salary': int(sum(predicted_salaries) / len(predicted_salaries)) if predicted_salaries else None
         }
@@ -60,15 +93,24 @@ def collect_hh_statistics(languages, area):
 def predict_rub_salary_sj(vacancy):
     salary_from = vacancy.get('payment_from')
     salary_to = vacancy.get('payment_to')
-    return (salary_from + salary_to) / 2 if salary_from and salary_to else salary_from or salary_to
+
+    if salary_from and salary_to:
+        return (salary_from + salary_to) / 2
+
+    if salary_from:
+        return salary_from
+    if salary_to:
+        return salary_to
+
+    return None
 
 
 def get_vacancies_sj(sj_secret_key, language, page_number):
     sj_params = {
-        'town': 4,
-        'catalogues': 48,
-        'period': 0,
-        'count': 100,
+        'town': TOWN_ID,
+        'catalogues': CATALOGUE_ID,
+        'period': DEFAULT_PERIOD,
+        'count': VACANCIES_COUNT,
         'page': page_number,
         'keyword': language,
         'no_agreement': 1
@@ -87,16 +129,25 @@ def collect_sj_statistics(languages, sj_secret_key):
         total_salary = 0
 
         try:
-            for page_number in range(100):
+            page_number = 0
+            while True:
                 jobs = get_vacancies_sj(sj_secret_key, language, page_number)
                 vacancies = jobs.get('objects', [])
+                total_vacancies = jobs.get('total', 0)
+
                 if not vacancies:
                     break
+
                 all_vacancies.extend(vacancies)
+
+                if len(vacancies) < VACANCIES_COUNT:
+                    break
+
+                page_number += 1
 
             for vacancy in all_vacancies:
                 salary = predict_rub_salary_sj(vacancy)
-                if salary is not None:
+                if salary:
                     total_salary += salary
                     processed_vacancies += 1
                 else:
@@ -142,3 +193,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
