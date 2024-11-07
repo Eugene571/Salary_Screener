@@ -148,8 +148,6 @@ def collect_sj_statistics(languages, sj_secret_key):
             if salary:
                 total_salary += salary
                 processed_vacancies += 1
-            else:
-                print(f"Вакансия без зарплаты: {vacancy['profession']}")
 
         stats[language] = {
             "vacancies_found": len(all_vacancies),
