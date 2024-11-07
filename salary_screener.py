@@ -28,20 +28,19 @@ def get_vacancies_hh(text, area, last_month_date):
         }
         response = requests.get('https://api.hh.ru/vacancies', params=params)
 
-        if response.status_code != 200:
-            print(f"Ошибка: {response.status_code} - {response.text}")
+        if not response.ok:
             break
 
-        data = response.json()
+        response_data = response.json()
 
-        total_vacancies = data.get('found', 0)
+        total_vacancies = response_data.get('found', 0)
 
-        if not data['items']:
+        if not response_data['items']:
             break
 
-        vacancies.extend(data['items'])
+        vacancies.extend(response_data['items'])
 
-        if page * per_page >= 2000 or len(data['items']) < per_page:
+        if page >= 20 or len(response_data['items']) < per_page:
             break
 
         page += 1
@@ -127,52 +126,48 @@ def collect_sj_statistics(languages, sj_secret_key):
         all_vacancies = []
         processed_vacancies = 0
         total_salary = 0
+        page_number = 0
 
-        try:
-            page_number = 0
-            while True:
-                jobs = get_vacancies_sj(sj_secret_key, language, page_number)
-                vacancies = jobs.get('objects', [])
-                total_vacancies = jobs.get('total', 0)
+        while True:
+            jobs = get_vacancies_sj(sj_secret_key, language, page_number)
+            vacancies = jobs.get('objects', [])
+            has_more = jobs.get('more', False)
 
-                if not vacancies:
-                    break
+            if not vacancies:
+                break
 
-                all_vacancies.extend(vacancies)
+            all_vacancies.extend(vacancies)
 
-                if len(vacancies) < VACANCIES_COUNT:
-                    break
+            if not has_more:
+                break
 
-                page_number += 1
+            page_number += 1
 
-            for vacancy in all_vacancies:
-                salary = predict_rub_salary_sj(vacancy)
-                if salary:
-                    total_salary += salary
-                    processed_vacancies += 1
-                else:
-                    print(f"Вакансия без зарплаты: {vacancy['profession']}")
+        for vacancy in all_vacancies:
+            salary = predict_rub_salary_sj(vacancy)
+            if salary:
+                total_salary += salary
+                processed_vacancies += 1
+            else:
+                print(f"Вакансия без зарплаты: {vacancy['profession']}")
 
-            stats[language] = {
-                "vacancies_found": len(all_vacancies),
-                "vacancies_processed": processed_vacancies,
-                "average_salary": int(total_salary / processed_vacancies) if processed_vacancies > 0 else None
-            }
-
-        except requests.exceptions.HTTPError as err:
-            print(f'Не удалось сделать на sj запрос для языка {language}\n {err}')
+        stats[language] = {
+            "vacancies_found": len(all_vacancies),
+            "vacancies_processed": processed_vacancies,
+            "average_salary": int(total_salary / processed_vacancies) if processed_vacancies else None
+        }
 
     return stats
 
 
 def print_statistics(title, stats):
     table_data = [['Язык программирования', 'Найдено вакансий', 'Обработано вакансий', 'Средняя зарплата']]
-    for language, data in stats.items():
+    for language, language_stats in stats.items():
         table_data.append([
             language,
-            data['vacancies_found'],
-            data['vacancies_processed'],
-            data['average_salary'] if data['average_salary'] is not None else 'Не указана'
+            language_stats['vacancies_found'],
+            language_stats['vacancies_processed'],
+            language_stats['average_salary'] if language_stats['average_salary'] is not None else 'Не указана'
         ])
 
     table = AsciiTable(table_data)
