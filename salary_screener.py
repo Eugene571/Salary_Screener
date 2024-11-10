@@ -1,7 +1,6 @@
 import requests
 import os
 from datetime import datetime, timedelta
-from dateutil import parser
 import pytz
 from terminaltables import AsciiTable
 from dotenv import load_dotenv
@@ -10,6 +9,17 @@ TOWN_ID = 4
 CATALOGUE_ID = 48
 DEFAULT_PERIOD = 0
 VACANCIES_COUNT = 100
+
+
+def calculate_salary(salary_from, salary_to):
+    if not salary_from and not salary_to:
+        return None
+    if salary_from and salary_to:
+        return (salary_from + salary_to) / 2
+    if salary_from:
+        return salary_from * 1.2
+    if salary_to:
+        return salary_to * 0.8
 
 
 def get_vacancies_hh(text, area, last_month_date):
@@ -31,16 +41,17 @@ def get_vacancies_hh(text, area, last_month_date):
         if not response.ok:
             break
 
-        response_data = response.json()
+        vacancies_response = response.json()
 
-        total_vacancies = response_data.get('found', 0)
+        total_vacancies = vacancies_response.get('found', 0)
 
-        if not response_data['items']:
+        if not vacancies_response['items']:
             break
 
-        vacancies.extend(response_data['items'])
+        vacancies.extend(vacancies_response['items'])
+        total_pages = vacancies_response.get('pages', 1)
 
-        if page >= 20 or len(response_data['items']) < per_page:
+        if page >= total_pages - 1 or len(vacancies_response['items']) < per_page:
             break
 
         page += 1
@@ -50,23 +61,13 @@ def get_vacancies_hh(text, area, last_month_date):
 
 def predict_rub_salary_hh(vacancy):
     salary = vacancy.get('salary')
-    if not salary:
-        return None
-
-    if salary.get('currency') != 'RUR':
+    if not salary or salary.get('currency') != 'RUR':
         return None
 
     salary_from = salary.get('from')
     salary_to = salary.get('to')
 
-    if salary_from and salary_to:
-        return (salary_from + salary_to) / 2
-    if salary_from:
-        return salary_from * 1.2
-    if salary_to:
-        return salary_to * 0.8
-
-    return None
+    return calculate_salary(salary_from, salary_to)
 
 
 def collect_hh_statistics(languages, area):
@@ -93,15 +94,7 @@ def predict_rub_salary_sj(vacancy):
     salary_from = vacancy.get('payment_from')
     salary_to = vacancy.get('payment_to')
 
-    if salary_from and salary_to:
-        return (salary_from + salary_to) / 2
-
-    if salary_from:
-        return salary_from
-    if salary_to:
-        return salary_to
-
-    return None
+    return calculate_salary(salary_from, salary_to)
 
 
 def get_vacancies_sj(sj_secret_key, language, page_number):
@@ -186,4 +179,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
